@@ -1,11 +1,11 @@
 const RAW_TARGET_URL = process.env.TARGET_URL || 'https://lms.rocket-soft.org';
-const BUILD_MARKER = 'fetch-timeout-phase-2026-10-07';
+const BUILD_MARKER = 'node-handler-body-read-fix-2026-10-23';
 const MAX_REDIRECTS = 5;
-const FETCH_TIMEOUT_MS = 12000;
+const REQUEST_TIMEOUT_MS = 25000;
 
 const TARGET = (() => {
   const raw = String(RAW_TARGET_URL).trim();
-  const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : 'https://' + raw);
+  const url = new URL(/^[a-z][a-z\\d+.-]*:\\/\\//i.test(raw) ? raw : 'https://' + raw);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('TARGET_URL must use http or https');
   return url;
 })();
@@ -21,8 +21,8 @@ function upstreamUrl(request) {
 
 function rewriteCookie(cookie) {
   return cookie
-    .replace(/;\s*Domain=[^;]*/i, '')
-    .replace(/;\s*SameSite=None/i, '; SameSite=Lax');
+    .replace(/;\\s*Domain=[^;]*/i, '')
+    .replace(/;\\s*SameSite=None/i, '; SameSite=Lax');
 }
 
 function copyHeaders(upstream) {
@@ -38,42 +38,86 @@ function copyHeaders(upstream) {
   return out;
 }
 
+function readIncomingBody(request) {
+  if (request.body == null) return Promise.resolve(undefined);
+  if (Buffer.isBuffer(request.body)) return Promise.resolve(request.body);
+  if (typeof request.body === 'string') return Promise.resolve(request.body);
+  // Vercel's Node request parser may already have parsed JSON/form bodies.
+  if (typeof request.body === 'object' && typeof request.on !== 'function') {
+    return Promise.resolve(JSON.stringify(request.body));
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    request.on('end', () => resolve(Buffer.concat(chunks)));
+    request.on('error', reject);
+  });
+}
+
+async function readBodyOnce(response, log) {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value?.byteLength) {
+        chunks.push(Buffer.from(value));
+        totalBytes += value.byteLength;
+        if (totalBytes === value.byteLength) {
+          log('body_first_chunk', { bytes: value.byteLength });
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  log('body_read_complete', { bytes: totalBytes });
+  return Buffer.concat(chunks, totalBytes);
+}
+
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export default async function handler(request) {
+// @vercel/node expects the Node (req, res) handler signature. Do not return
+// a Web Response from this handler: the Node runtime ignores that return value.
+export default async function handler(request, response) {
   const requestId = crypto.randomUUID();
   const started = Date.now();
   const log = (event, extra = {}) => console.log(JSON.stringify({
     requestId, event, build: BUILD_MARKER, elapsedMs: Date.now() - started, ...extra
   }));
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let upstream;
+
   try {
     const original = upstreamUrl(request);
     const method = String(request.method || 'GET').toUpperCase();
+    const requestBody = ['GET', 'HEAD'].includes(method) ? undefined : await readIncomingBody(request);
     let current = original;
-    let upstream;
     const cookieJar = [];
 
     log('proxy_start', { method, path: incomingUrl(request).pathname, upstreamUrl: original.toString() });
 
     for (let redirectNumber = 0; redirectNumber <= MAX_REDIRECTS; redirectNumber++) {
       log('fetch_before', { url: current.toString(), redirectNumber });
-      // For GET redirects, issue the next request as a fresh bare fetch after resolving Location.
-
-      // Do not touch request.headers or add a Host header. The earlier
-      // successful transport test proved bare fetch() works on this runtime.
-      const fetchController = new AbortController();
-      const fetchTimer = setTimeout(() => fetchController.abort(), FETCH_TIMEOUT_MS);
-      try {
-        upstream = await fetch(current, {
-          method,
-          redirect: 'manual',
-          signal: fetchController.signal
-        });
-      } finally {
-        clearTimeout(fetchTimer);
+      const fetchHeaders = new Headers();
+      for (const name of ['accept', 'accept-language', 'content-type', 'user-agent', 'cookie', 'authorization']) {
+        const value = request.headers?.[name];
+        if (typeof value === 'string' && value) fetchHeaders.set(name, value);
       }
+
+      upstream = await fetch(current, {
+        method,
+        headers: fetchHeaders,
+        body: requestBody,
+        redirect: 'manual',
+        signal: controller.signal
+      });
 
       log('fetch_after', {
         status: upstream.status,
@@ -85,7 +129,6 @@ export default async function handler(request) {
       const cookies = typeof upstream.headers.getSetCookie === 'function'
         ? upstream.headers.getSetCookie()
         : [];
-
       for (const cookie of cookies) {
         const pair = cookie.split(';', 1)[0];
         const name = pair.split('=', 1)[0];
@@ -95,7 +138,6 @@ export default async function handler(request) {
       }
 
       if (upstream.status < 300 || upstream.status >= 400) break;
-
       const location = upstream.headers.get('location');
       if (!location) break;
 
@@ -104,22 +146,16 @@ export default async function handler(request) {
         log('redirect_blocked_external', { location: next.toString() });
         break;
       }
-
       current = next;
     }
 
     const headers = copyHeaders(upstream);
-
     const finalCookies = typeof upstream.headers.getSetCookie === 'function'
       ? upstream.headers.getSetCookie()
       : [];
+    for (const cookie of finalCookies) headers.append('set-cookie', rewriteCookie(cookie));
 
-    for (const cookie of finalCookies) {
-      headers.append('set-cookie', rewriteCookie(cookie));
-    }
-
-    // The proxy cannot replay the upstream cookie jar back to the browser
-    // as a single Cookie header; expose established pairs as normal cookies.
+    // Expose cookies encountered during same-origin redirects as separate cookies.
     for (const pair of cookieJar) {
       headers.append('set-cookie', rewriteCookie(pair + '; Path=/'));
     }
@@ -127,59 +163,56 @@ export default async function handler(request) {
     const location = upstream.headers.get('location');
     if (location) {
       const next = new URL(location, current);
-      headers.set('location',
-        next.origin === TARGET.origin
-          ? next.pathname + next.search + next.hash
-          : next.toString()
-      );
+      headers.set('location', next.origin === TARGET.origin
+        ? next.pathname + next.search + next.hash
+        : next.toString());
     }
 
-    let body = null;
-    if (method !== 'HEAD') {
-      const headerSnapshot = {};
-      for (const [name, value] of upstream.headers) {
-        if (['content-length','content-encoding','transfer-encoding','connection','cache-control','server'].includes(name.toLowerCase())) {
-          headerSnapshot[name] = value;
-        }
+    const headerSnapshot = {};
+    for (const [name, value] of upstream.headers) {
+      if (['content-length','content-encoding','transfer-encoding','connection','cache-control','server'].includes(name.toLowerCase())) {
+        headerSnapshot[name] = value;
       }
-      log('body_inspect', { headers: headerSnapshot });
-
-      if (!upstream.body) throw new Error('Upstream response has no body stream');
-      const reader = upstream.body.getReader();
-      log('body_read_start', { finalUrl: current.toString() });
-      const first = await Promise.race([
-        reader.read(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for first upstream body chunk')), 10000))
-      ]);
-      log('body_first_chunk', { done: first.done, bytes: first.value ? first.value.byteLength : 0 });
-      reader.releaseLock();
-      body = await upstream.arrayBuffer();
-      log('body_read_complete', { bytes: body.byteLength });
     }
+    log('body_inspect', { headers: headerSnapshot, finalUrl: current.toString() });
+
+    const body = method === 'HEAD' ? Buffer.alloc(0) : await readBodyOnce(upstream, log);
+    const responseHeaders = Object.fromEntries(headers.entries());
+    const setCookies = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+    if (setCookies.length) responseHeaders['set-cookie'] = setCookies;
 
     log('response_ready', {
       status: upstream.status,
       finalUrl: current.toString(),
       contentType: upstream.headers.get('content-type'),
-      bodyBytes: body ? body.byteLength : 0
+      bodyBytes: body.byteLength
     });
 
-    return new Response(body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers
-    });
+    response.writeHead(upstream.status, upstream.statusText, responseHeaders);
+    response.end(body);
   } catch (error) {
     log('failure', {
       errorName: error?.name,
-      errorMessage: error?.message,
+      errorMessage: error?.name === 'AbortError'
+        ? `Upstream request/body exceeded ${REQUEST_TIMEOUT_MS}ms timeout`
+        : error?.message,
       stack: error?.stack
     });
 
-    return Response.json({
-      error: 'Proxy failure',
-      message: error?.message || 'Unknown error',
-      requestId
-    }, { status: 502 });
+    if (!response.headersSent) {
+      response.statusCode = error?.name === 'AbortError' ? 504 : 502;
+      response.setHeader('content-type', 'application/json; charset=utf-8');
+      response.end(JSON.stringify({
+        error: 'Proxy failure',
+        message: error?.name === 'AbortError'
+          ? `Upstream request/body exceeded ${REQUEST_TIMEOUT_MS}ms timeout`
+          : error?.message || 'Unknown error',
+        requestId
+      }));
+    } else {
+      response.destroy(error);
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
