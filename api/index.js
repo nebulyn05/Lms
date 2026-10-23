@@ -2,8 +2,8 @@ const RAW_TARGET_URL = process.env.TARGET_URL || 'https://lms.rocket-soft.org';
 const BUILD_MARKER = 'node-handler-body-read-fix-2026-10-23';
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 25000;
-const BLOCKED_BRAND_ASSET_PATH = /(?:^|\\/)logo\\.svg$/i;
-const FAVICON_PATH = /(?:^|\\/)(?:favicon(?:[-_]\\d+x\\d+)?\\.(?:ico|png|jpe?g|gif|svg|webp)|favicon\\/[^/?#]+\\.(?:ico|png|jpe?g|gif|svg|webp)|apple-touch-icon(?:-\\d+x\\d+)?\\.png|icon-\\d+x\\d+\\.png)(?:$)/i;
+const BLOCKED_BRAND_ASSET_PATH = /(?:^|\/)logo\.svg$/i;
+const FAVICON_PATH = /(?:^|\/)(?:favicon(?:[-_]\d+x\d+)?\.(?:ico|png|jpe?g|gif|svg|webp)|favicon\/[^/?#]+\.(?:ico|png|jpe?g|gif|svg|webp)|apple-touch-icon(?:-\d+x\d+)?\.png|icon-\d+x\d+\.png)$/i;
 
 const TARGET = (() => {
   const raw = String(RAW_TARGET_URL).trim();
