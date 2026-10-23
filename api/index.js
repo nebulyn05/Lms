@@ -43,7 +43,11 @@ function readIncomingBody(request) {
   if (Buffer.isBuffer(request.body)) return Promise.resolve(request.body);
   if (typeof request.body === 'string') return Promise.resolve(request.body);
   // Vercel's Node request parser may already have parsed JSON/form bodies.
-  if (typeof request.body === 'object' && typeof request.on !== 'function') {
+  if (typeof request.body === 'object') {
+    const contentType = String(request.headers?.['content-type'] || '').toLowerCase();
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      return Promise.resolve(new URLSearchParams(request.body).toString());
+    }
     return Promise.resolve(JSON.stringify(request.body));
   }
   return new Promise((resolve, reject) => {
