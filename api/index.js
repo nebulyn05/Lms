@@ -219,7 +219,7 @@ export default async function handler(request, response) {
 
     // Rebrand textual upstream responses without touching binary assets.
     const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
-    const isTextual = /^(text\\/|application\\/(?:json|javascript|x-javascript|xml|xhtml\\+xml|graphql|ld\\+json))/.test(contentType);
+    const isTextual = /^(text\/|application\/(?:json|javascript|x-javascript|xml|xhtml\+xml|graphql|ld\+json))/.test(contentType);
     if (body.length && FROM && isTextual) {
       const originalText = body.toString('utf8');
       const brandedText = originalText.split(FROM).join(TO);
