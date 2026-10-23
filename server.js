@@ -40,7 +40,7 @@ const FLAGS = {
 };
 
 const PORT = Number(env('PORT', 3000));
-const TARGET_HOST = env('TARGET_HOST', 'zalcrm.com'); // main upstream site
+const TARGET_HOST = env('TARGET_HOST', 'lms.rocket-soft.org'); // main upstream site
 const UPSTREAM_PORT = Number(env('UPSTREAM_PORT', 443)); // only applies to TARGET_HOST
 const EXT_PREFIX = '/__ext/';                          // other hosts are served under /__ext/<host>/...
 const BRAND_FROM = 'Onezeroart';
