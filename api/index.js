@@ -5,7 +5,7 @@ const REQUEST_TIMEOUT_MS = 25000;
 
 const TARGET = (() => {
   const raw = String(RAW_TARGET_URL).trim();
-  const url = new URL(/^[a-z][a-z\\d+.-]*:\\/\\//i.test(raw) ? raw : 'https://' + raw);
+  const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : 'https://' + raw);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('TARGET_URL must use http or https');
   return url;
 })();
@@ -21,8 +21,8 @@ function upstreamUrl(request) {
 
 function rewriteCookie(cookie) {
   return cookie
-    .replace(/;\\s*Domain=[^;]*/i, '')
-    .replace(/;\\s*SameSite=None/i, '; SameSite=Lax');
+    .replace(/;\s*Domain=[^;]*/i, '')
+    .replace(/;\s*SameSite=None/i, '; SameSite=Lax');
 }
 
 function copyHeaders(upstream) {
