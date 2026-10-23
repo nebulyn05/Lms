@@ -2,6 +2,8 @@ const RAW_TARGET_URL = process.env.TARGET_URL || 'https://lms.rocket-soft.org';
 const BUILD_MARKER = 'node-handler-body-read-fix-2026-10-23';
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 25000;
+const BLOCKED_BRAND_ASSET_PATH = /(?:^|\\/)logo\\.svg$/i;
+const FAVICON_PATH = /(?:^|\\/)(?:favicon(?:[-_]\\d+x\\d+)?\\.(?:ico|png|jpe?g|gif|svg|webp)|favicon\\/[^/?#]+\\.(?:ico|png|jpe?g|gif|svg|webp)|apple-touch-icon(?:-\\d+x\\d+)?\\.png|icon-\\d+x\\d+\\.png)(?:$)/i;
 
 const TARGET = (() => {
   const raw = String(RAW_TARGET_URL).trim();
@@ -111,11 +113,22 @@ export default async function handler(request, response) {
   try {
     const original = upstreamUrl(request);
     const method = String(request.method || 'GET').toUpperCase();
-    const requestBody = ['GET', 'HEAD'].includes(method) ? undefined : await readIncomingBody(request);
+    let currentMethod = method;
+    let currentBody = ['GET', 'HEAD'].includes(method) ? undefined : await readIncomingBody(request);
     let current = original;
     const cookieJar = [];
+    const pathname = incomingUrl(request).pathname;
 
-    log('proxy_start', { method, path: incomingUrl(request).pathname, upstreamUrl: original.toString() });
+    log('proxy_start', { method, path: pathname, upstreamUrl: original.toString() });
+
+    // Suppress upstream branding assets consistently, including requests made
+    // directly by login pages rather than only links in the document head.
+    if (FAVICON_PATH.test(pathname) || BLOCKED_BRAND_ASSET_PATH.test(pathname)) {
+      log('brand_asset_blocked', { path: pathname });
+      response.writeHead(204, { 'cache-control': 'public, max-age=3600' });
+      response.end();
+      return;
+    }
 
     for (let redirectNumber = 0; redirectNumber <= MAX_REDIRECTS; redirectNumber++) {
       log('fetch_before', { url: current.toString(), redirectNumber });
@@ -126,9 +139,9 @@ export default async function handler(request, response) {
       }
 
       upstream = await fetch(current, {
-        method,
+        method: currentMethod,
         headers: fetchHeaders,
-        body: requestBody,
+        body: currentBody,
         redirect: 'manual',
         signal: controller.signal
       });
@@ -159,6 +172,16 @@ export default async function handler(request, response) {
       if (next.origin !== TARGET.origin) {
         log('redirect_blocked_external', { location: next.toString() });
         break;
+      }
+
+      // Match browser redirect semantics: POST + 301/302 and non-HEAD + 303
+      // become GET. Only 307/308 preserve the original method and body.
+      if ((upstream.status === 301 || upstream.status === 302) && currentMethod === 'POST') {
+        currentMethod = 'GET';
+        currentBody = undefined;
+      } else if (upstream.status === 303 && currentMethod !== 'HEAD') {
+        currentMethod = 'GET';
+        currentBody = undefined;
       }
       current = next;
     }
