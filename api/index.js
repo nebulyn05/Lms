@@ -125,10 +125,23 @@ export default async function handler(request, response) {
 
     // Suppress upstream branding assets consistently, including requests made
     // directly by login pages rather than only links in the document head.
-    if (FAVICON_PATH.test(pathname) || BLOCKED_BRAND_ASSET_PATH.test(pathname)) {
-      log('brand_asset_blocked', { path: pathname });
-      response.writeHead(204, { 'cache-control': 'public, max-age=3600' });
-      response.end();
+    const normalizedPath = decodeURIComponent(pathname).replace(/\\/+$/, '');
+    if (
+      FAVICON_PATH.test(normalizedPath) ||
+      BLOCKED_BRAND_ASSET_PATH.test(normalizedPath) ||
+      /\/store\/1\/default_images\/logo-dark\.svg$/i.test(normalizedPath)
+    ) {
+      log('brand_asset_blocked', { path: normalizedPath });
+      // Prevent browsers/CDNs from retaining a previously cached upstream logo.
+      response.writeHead(404, {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store, no-cache, max-age=0, must-revalidate',
+        'cdn-cache-control': 'no-store',
+        'vercel-cdn-cache-control': 'no-store',
+        'pragma': 'no-cache',
+        'expires': '0'
+      });
+      response.end('');
       return;
     }
 
