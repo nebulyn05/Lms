@@ -1,4 +1,4 @@
-const RAW_TARGET_URL = process.env.TARGET_URL || 'https://zalcrm.com';
+const RAW_TARGET_URL = process.env.TARGET_URL || 'https://lms.rocket-soft.org';
 const BUILD_MARKER = 'fetch-timeout-phase-2026-10-07';
 const MAX_REDIRECTS = 5;
 const FETCH_TIMEOUT_MS = 12000;
