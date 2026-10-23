@@ -39,7 +39,17 @@ function copyHeaders(upstream) {
 }
 
 function readIncomingBody(request) {
-  if (request.body == null) return Promise.resolve(undefined);
+  if (request.body == null) {
+    const length = Number(request.headers?.['content-length'] || 0);
+    const hasTransferEncoding = Boolean(request.headers?.['transfer-encoding']);
+    if (length <= 0 && !hasTransferEncoding) return Promise.resolve(undefined);
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      request.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      request.on('end', () => resolve(Buffer.concat(chunks)));
+      request.on('error', reject);
+    });
+  }
   if (Buffer.isBuffer(request.body)) return Promise.resolve(request.body);
   if (typeof request.body === 'string') return Promise.resolve(request.body);
   // Vercel's Node request parser may already have parsed JSON/form bodies.
