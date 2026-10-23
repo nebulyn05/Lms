@@ -43,7 +43,7 @@ const PORT = Number(env('PORT', 3000));
 const TARGET_HOST = env('TARGET_HOST', 'lms.rocket-soft.org'); // main upstream site
 const UPSTREAM_PORT = Number(env('UPSTREAM_PORT', 443)); // only applies to TARGET_HOST
 const EXT_PREFIX = '/__ext/';                          // other hosts are served under /__ext/<host>/...
-const BRAND_FROM = 'Onezeroart';
+const BRAND_FROM = 'Rocket';
 const BRAND_TO = 'YourBrand';
 
 const TIMEOUT_MS = Number(env('UPSTREAM_TIMEOUT_MS', 30000)); // upstream idle timeout -> 504
