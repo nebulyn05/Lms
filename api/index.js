@@ -125,7 +125,7 @@ export default async function handler(request, response) {
 
     // Suppress upstream branding assets consistently, including requests made
     // directly by login pages rather than only links in the document head.
-    const normalizedPath = decodeURIComponent(pathname).replace(/\\/+$/, '');
+    const normalizedPath = decodeURIComponent(pathname).replace(/\/+$/, '');
     if (
       FAVICON_PATH.test(normalizedPath) ||
       BLOCKED_BRAND_ASSET_PATH.test(normalizedPath) ||
