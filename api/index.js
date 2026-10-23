@@ -4,7 +4,7 @@ const FROM = 'Rocket';
 const TO = 'YourBrand';
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 25000;
-const BLOCKED_BRAND_ASSET_PATH = /(?:^|\/)logo\.svg$/i;
+const BLOCKED_BRAND_ASSET_PATH = /(?:^|\/)(?:logo(?:-dark)?\.svg)$/i;
 const FAVICON_PATH = /(?:^|\/)(?:favicon(?:[-_]\d+x\d+)?\.(?:ico|png|jpe?g|gif|svg|webp)|favicon\/[^/?#]+\.(?:ico|png|jpe?g|gif|svg|webp)|apple-touch-icon(?:-\d+x\d+)?\.png|icon-\d+x\d+\.png)$/i;
 
 const TARGET = (() => {
@@ -220,12 +220,25 @@ export default async function handler(request, response) {
     // Rebrand textual upstream responses without touching binary assets.
     const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
     const isTextual = /^(text\/|application\/(?:json|javascript|x-javascript|xml|xhtml\+xml|graphql|ld\+json))/.test(contentType);
-    if (body.length && FROM && isTextual) {
+    if (body.length && isTextual) {
       const originalText = body.toString('utf8');
-      const brandedText = originalText.split(FROM).join(TO);
+      let brandedText = originalText.split(FROM).join(TO);
+
+      // Replace upstream contact details in rendered text/JSON, while keeping
+      // the upstream target URL unchanged so the proxy can still reach it.
+      brandedText = brandedText
+        .split('lms.rocket-soft.org').join('lms.yourbrand.org')
+        .split('+1 (323) 555-9876').join('+1 (234) 567-8900')
+        .split('+1 (213) 555-4321').join('+1 (234) 567-8900')
+        .split('+1 (234) 567-8900').join('+1 (234) 567-8900');
+
       if (brandedText !== originalText) {
         body = Buffer.from(brandedText, 'utf8');
-        log('brand_text_replaced', { from: FROM, to: TO, contentType, bodyBytes: body.byteLength });
+        log('brand_text_replaced', {
+          contentType,
+          replaced: brandedText !== originalText,
+          bodyBytes: body.byteLength
+        });
       }
     }
     const responseHeaders = Object.fromEntries(headers.entries());
