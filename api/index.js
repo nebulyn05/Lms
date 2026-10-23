@@ -1,5 +1,7 @@
 const RAW_TARGET_URL = process.env.TARGET_URL || 'https://lms.rocket-soft.org';
 const BUILD_MARKER = 'node-handler-body-read-fix-2026-10-23';
+const FROM = 'Rocket';
+const TO = 'YourBrand';
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 25000;
 const BLOCKED_BRAND_ASSET_PATH = /(?:^|\/)logo\.svg$/i;
@@ -213,7 +215,19 @@ export default async function handler(request, response) {
     }
     log('body_inspect', { headers: headerSnapshot, finalUrl: current.toString() });
 
-    const body = method === 'HEAD' ? Buffer.alloc(0) : await readBodyOnce(upstream, log);
+    let body = method === 'HEAD' ? Buffer.alloc(0) : await readBodyOnce(upstream, log);
+
+    // Rebrand textual upstream responses without touching binary assets.
+    const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
+    const isTextual = /^(text\\/|application\\/(?:json|javascript|x-javascript|xml|xhtml\\+xml|graphql|ld\\+json))/.test(contentType);
+    if (body.length && FROM && isTextual) {
+      const originalText = body.toString('utf8');
+      const brandedText = originalText.split(FROM).join(TO);
+      if (brandedText !== originalText) {
+        body = Buffer.from(brandedText, 'utf8');
+        log('brand_text_replaced', { from: FROM, to: TO, contentType, bodyBytes: body.byteLength });
+      }
+    }
     const responseHeaders = Object.fromEntries(headers.entries());
     const setCookies = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
     if (setCookies.length) responseHeaders['set-cookie'] = setCookies;
